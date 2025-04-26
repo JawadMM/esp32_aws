@@ -7,12 +7,15 @@
 #include "DHT.h"
 #define DHTPIN 12     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT22   // DHT 22
+
+#define MQ135PIN 34   // Analog pin connected to the MQ135 sensor
  
 #define AWS_IOT_PUBLISH_TOPIC   "esp32/pub"
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
  
-float h ;
+float h;
 float t;
+float airQuality;  // Variable to store MQ135 sensor reading
  
 DHT dht(DHTPIN, DHTTYPE);
  
@@ -79,24 +82,39 @@ void publishMessage()
   StaticJsonDocument<200> doc;
   doc["humidity"] = h;
   doc["temperature"] = t;
+  doc["airQuality"] = airQuality;  // Add air quality data to JSON
   char jsonBuffer[512];
   serializeJson(doc, jsonBuffer); // print to client
  
   client.publish(AWS_IOT_PUBLISH_TOPIC, jsonBuffer);
 }
- 
+
+float readMQ135()
+{ 
+  // Take average
+  int sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogRead(MQ135PIN);
+    delay(10);
+  }
+  int sensorValue = sum / 10;
+  
+  return sensorValue;
+}
 void setup()
 {
   Serial.begin(115200);
   connectAWS();
   dht.begin();
+  pinMode(MQ135PIN, INPUT);  // Set MQ135 pin as input
 }
  
 void loop()
 {
+  // Read sensor values
   h = dht.readHumidity();
   t = dht.readTemperature();
- 
+  airQuality = readMQ135();
  
   if (isnan(h) || isnan(t) || h > 100.0 || t < -40.0 || t > 80.0)  // Check if any reads failed and exit early (to try again).
   {
@@ -108,7 +126,8 @@ void loop()
   Serial.print(h, 1);
   Serial.print(F("%  Temperature: "));
   Serial.print(t, 1);
-  Serial.println(F("°C "));
+  Serial.print(F("°C  Air Quality: "));
+  Serial.println(airQuality);
  
   publishMessage();
   client.loop();
