@@ -10,6 +10,11 @@
 
 #define MQ135PIN 34   // Analog pin connected to the MQ135 sensor
  
+// RGB LED pins
+#define RED_PIN 27   
+#define GREEN_PIN 26
+#define BLUE_PIN 25
+
 #define AWS_IOT_PUBLISH_TOPIC   "esp32/pub"
 #define AWS_IOT_SUBSCRIBE_TOPIC "esp32/sub"
  
@@ -22,6 +27,18 @@ DHT dht(DHTPIN, DHTTYPE);
 WiFiClientSecure net = WiFiClientSecure();
 PubSubClient client(net);
 
+// Timing variables
+unsigned long lastPublishTime = 0;
+const unsigned long PUBLISH_INTERVAL = 2000;  // Publish every 2 seconds
+const unsigned long LOOP_INTERVAL = 50;       // Check for messages every 50ms
+
+// Function to set RGB LED color
+void setLEDColor(int red, int green, int blue) {
+  analogWrite(RED_PIN, red);
+  analogWrite(GREEN_PIN, green);
+  analogWrite(BLUE_PIN, blue);
+}
+
 void messageHandler(char* topic, byte* payload, unsigned int length)
 {
   Serial.print("incoming: ");
@@ -29,8 +46,19 @@ void messageHandler(char* topic, byte* payload, unsigned int length)
  
   StaticJsonDocument<200> doc;
   deserializeJson(doc, payload);
-  const char* message = doc["message"];
-  Serial.println(message);
+  
+  // Check if message contains LED command
+  if (doc.containsKey("led")) {
+    int red = doc["led"]["red"];
+    int green = doc["led"]["green"];
+    int blue = doc["led"]["blue"];
+    
+    Serial.printf("Setting LED - R:%d G:%d B:%d\n", red, green, blue);
+    setLEDColor(red, green, blue);
+  } else {
+    const char* message = doc["message"];
+    Serial.println(message);
+  }
 }
  
 void connectAWS()
@@ -101,17 +129,9 @@ float readMQ135()
   
   return sensorValue;
 }
-void setup()
+
+void readSensors()
 {
-  Serial.begin(115200);
-  connectAWS();
-  dht.begin();
-  pinMode(MQ135PIN, INPUT);  // Set MQ135 pin as input
-}
- 
-void loop()
-{
-  // Read sensor values
   h = dht.readHumidity();
   t = dht.readTemperature();
   airQuality = readMQ135();
@@ -128,8 +148,45 @@ void loop()
   Serial.print(t, 1);
   Serial.print(F("°C  Air Quality: "));
   Serial.println(airQuality);
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  
+  // Initialize RGB LED pins
+  pinMode(RED_PIN, OUTPUT);
+  pinMode(GREEN_PIN, OUTPUT);
+  pinMode(BLUE_PIN, OUTPUT);
+  
+  connectAWS();
+  dht.begin();
+  pinMode(MQ135PIN, INPUT);  // Set MQ135 pin as input
+  
+  // Initialize timing
+  lastPublishTime = millis();
+}
  
-  publishMessage();
+void loop()
+{
+  // Ensure we're still connected to AWS IoT
+  if (!client.connected()) {
+    Serial.println("AWS IoT disconnected. Reconnecting...");
+    connectAWS();
+  }
+  
+  // Call client.loop() frequently to process incoming messages quickly
+  // and chnage the LED color with almost no delay
   client.loop();
-  delay(2000);
+  
+  // Publish sensor data
+  unsigned long currentTime = millis();
+  if (currentTime - lastPublishTime >= PUBLISH_INTERVAL) {
+    readSensors();
+    publishMessage();
+    lastPublishTime = currentTime;
+  }
+  
+  // Small delay to prevent CPU overload
+  delay(LOOP_INTERVAL);
 }
